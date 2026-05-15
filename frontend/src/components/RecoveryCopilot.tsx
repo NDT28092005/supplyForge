@@ -3,7 +3,14 @@
 import { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 
-// ─── Interfaces ─────────────────────────────────────────────────────────────
+// ─── Constants (mirrors application.yml) ─────────────────────────────────────
+const STORAGE_COST_YEARLY = 0.25;
+const MARKETING_COST_RATE = 0.08;
+const CORPORATE_TAX_RATE  = 0.20;
+const HIGH_VALUE_THRESHOLD = 10_000_000;
+const MID_VALUE_THRESHOLD  =  1_000_000;
+
+// ─── Interfaces ──────────────────────────────────────────────────────────────
 export interface RecoveryCopilotProps {
   deadStockData: {
     totalFrozenValue: number;
@@ -13,7 +20,7 @@ export interface RecoveryCopilotProps {
       costPrice: number;
       sellingPrice: number;
       lastOrderDate: string;
-      daysInInventory?: number; // Từ API Aging
+      daysInInventory?: number;
     } | null;
     topSellingSku: {
       name: string;
@@ -23,8 +30,23 @@ export interface RecoveryCopilotProps {
   };
 }
 
+interface FinancialMetrics {
+  originalCostBasis: number;
+  accumulatedStorageCost: number;
+  totalSunkCost: number;
+  expectedRevenue: number;
+  marketingCost: number;
+  grossRecoveryRate: number;
+  netRecoveryRate: number;
+  breakEvenDiscountPct: number;
+  taxShieldValue: number;
+  matrixQuadrant: string;
+  isTaxShieldRecommended: boolean;
+}
+
 type RpaState = 'idle' | 'initializing' | 'injecting' | 'done';
 type LiquidationPhase = 'phase1' | 'phase2' | 'phase3';
+
 
 interface RpaPayload {
   action: string;
@@ -49,6 +71,66 @@ function getLiquidationPhase(days: number): LiquidationPhase {
   if (days <= 120) return 'phase2';
   return 'phase3';
 }
+
+function classifyMatrix(totalValue: number, days: number): string {
+  const isOld = days > 60;
+  if (!isOld && totalValue >= HIGH_VALUE_THRESHOLD) return 'HIGH_VALUE_NEW';
+  if (!isOld && totalValue >= MID_VALUE_THRESHOLD)  return 'MID_VALUE_NEW';
+  if (!isOld)                                        return 'LOW_VALUE_NEW';
+  if (totalValue >= HIGH_VALUE_THRESHOLD)            return 'HIGH_VALUE_OLD';
+  if (totalValue >= MID_VALUE_THRESHOLD)             return 'MID_VALUE_OLD';
+  return 'LOW_VALUE_OLD';
+}
+
+function calculateFinancialMetrics(
+  sku: NonNullable<RecoveryCopilotProps['deadStockData']['topDeadSku']>,
+  days: number,
+  discountPct: number
+): FinancialMetrics {
+  const originalCostBasis = sku.costPrice * sku.quantity;
+  const months = Math.max(1, days / 30);
+  const accumulatedStorageCost = originalCostBasis * (STORAGE_COST_YEARLY / 12) * months;
+  const totalSunkCost = originalCostBasis + accumulatedStorageCost;
+
+  const salePrice = Math.max(0, sku.sellingPrice * (1 - discountPct));
+  const expectedRevenue = salePrice * sku.quantity;
+  const marketingCost = expectedRevenue * MARKETING_COST_RATE;
+  const netRevenue = expectedRevenue - marketingCost;
+
+  const grossRecoveryRate = originalCostBasis > 0
+    ? (expectedRevenue / originalCostBasis) * 100 : 0;
+  const netRecoveryRate = originalCostBasis > 0
+    ? ((netRevenue - accumulatedStorageCost) / originalCostBasis) * 100 : 0;
+
+  // Break-even: Net Revenue = Total Sunk Cost → solve for salePrice
+  const breakEvenSalePrice = (sku.quantity > 0 && (1 - MARKETING_COST_RATE) > 0)
+    ? totalSunkCost / (sku.quantity * (1 - MARKETING_COST_RATE))
+    : sku.sellingPrice;
+  const breakEvenDiscountPct = sku.sellingPrice > 0
+    ? Math.min(100, Math.max(0, ((sku.sellingPrice - breakEvenSalePrice) / sku.sellingPrice) * 100))
+    : 0;
+
+  const writeOffLoss = Math.max(0, totalSunkCost - expectedRevenue);
+  const taxShieldValue = writeOffLoss * CORPORATE_TAX_RATE;
+
+  const matrixQuadrant = classifyMatrix(originalCostBasis, days);
+  const isTaxShieldRecommended = netRecoveryRate < 0 || matrixQuadrant === 'LOW_VALUE_OLD';
+
+  return {
+    originalCostBasis,
+    accumulatedStorageCost,
+    totalSunkCost,
+    expectedRevenue,
+    marketingCost,
+    grossRecoveryRate: Math.round(grossRecoveryRate * 100) / 100,
+    netRecoveryRate: Math.round(netRecoveryRate * 100) / 100,
+    breakEvenDiscountPct: Math.round(breakEvenDiscountPct * 100) / 100,
+    taxShieldValue,
+    matrixQuadrant,
+    isTaxShieldRecommended,
+  };
+}
+
 
 // ─── Progressive Liquidation Config ─────────────────────────────────────────
 const LIQUIDATION_PHASES = {
@@ -92,6 +174,176 @@ const LIQUIDATION_PHASES = {
     rpaAction: 'SCHEDULE_CLEARANCE_SALE',
   },
 };
+
+// ─── Break-even Dashboard ─────────────────────────────────────────────────────
+function BreakEvenDashboard({ fm }: { fm: FinancialMetrics }) {
+  const netColor = fm.netRecoveryRate >= 0 ? 'text-accent' : 'text-red-400';
+  const beWarning = fm.breakEvenDiscountPct < 10;
+
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 12 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ delay: 0.15, duration: 0.5 }}
+      className="bg-[#0A0A0A] border border-[#1e1e1e] rounded-2xl p-6"
+    >
+      {/* Header */}
+      <div className="flex items-center justify-between mb-6">
+        <span className="text-[10px] font-mono text-secondary uppercase tracking-[0.2em]">
+          CFO Financial Analysis · Break-even & ROI
+        </span>
+        <span className="text-[10px] font-mono text-secondary/40">FIFO · 20% TNDN</span>
+      </div>
+
+      {/* 3-column grid */}
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-px bg-[#1e1e1e] rounded-xl overflow-hidden">
+        {/* Col 1: Sunk Cost */}
+        <div className="bg-[#0A0A0A] p-5">
+          <div className="text-[10px] font-mono text-secondary uppercase tracking-widest mb-3">
+            Chi phí chìm (Sunk Cost)
+          </div>
+          <div className="space-y-2.5">
+            <div className="flex justify-between items-baseline">
+              <span className="text-xs text-secondary/70">Giá vốn ban đầu</span>
+              <span className="font-mono text-sm text-primary tabular-nums">{formatVND(fm.originalCostBasis)}</span>
+            </div>
+            <div className="flex justify-between items-baseline">
+              <span className="text-xs text-secondary/70">Phí lưu kho lũy kế</span>
+              <span className="font-mono text-sm text-orange-400 tabular-nums">+ {formatVND(fm.accumulatedStorageCost)}</span>
+            </div>
+            <div className="border-t border-[#1e1e1e] pt-2.5 flex justify-between items-baseline">
+              <span className="text-xs text-secondary font-medium">Tổng chi phí chìm</span>
+              <span className="font-mono text-base font-bold text-primary tabular-nums">{formatVND(fm.totalSunkCost)}</span>
+            </div>
+          </div>
+        </div>
+
+        {/* Col 2: Recovery Rate */}
+        <div className="bg-[#0A0A0A] p-5">
+          <div className="text-[10px] font-mono text-secondary uppercase tracking-widest mb-3">
+            Tỷ lệ thu hồi ròng
+          </div>
+          <div className="space-y-2.5">
+            <div className="flex justify-between items-baseline">
+              <span className="text-xs text-secondary/70">Doanh thu xả hàng</span>
+              <span className="font-mono text-sm text-primary tabular-nums">{formatVND(fm.expectedRevenue)}</span>
+            </div>
+            <div className="flex justify-between items-baseline">
+              <span className="text-xs text-secondary/70">Chi phí MKT & vận chuyển</span>
+              <span className="font-mono text-sm text-secondary/60 tabular-nums">- {formatVND(fm.marketingCost)}</span>
+            </div>
+            <div className="border-t border-[#1e1e1e] pt-2.5 flex justify-between items-baseline">
+              <span className="text-xs text-secondary font-medium">Thu hồi ròng sau mọi CP</span>
+              <span className={`font-mono text-base font-bold tabular-nums ${netColor}`}>
+                {fm.netRecoveryRate >= 0 ? '+' : ''}{fm.netRecoveryRate.toFixed(1)}%
+              </span>
+            </div>
+          </div>
+        </div>
+
+        {/* Col 3: Break-even Threshold */}
+        <div className={`p-5 ${beWarning ? 'bg-red-950/20' : 'bg-[#0A0A0A]'}`}>
+          <div className="text-[10px] font-mono text-secondary uppercase tracking-widest mb-3">
+            Ngưỡng hòa vốn
+          </div>
+          <div className="space-y-2.5">
+            <div className="flex justify-between items-baseline">
+              <span className="text-xs text-secondary/70">Tỷ lệ thu hồi gộp</span>
+              <span className="font-mono text-sm text-primary tabular-nums">{fm.grossRecoveryRate.toFixed(1)}%</span>
+            </div>
+            <div className="flex justify-between items-baseline">
+              <span className="text-xs text-secondary/70">Giảm giá tối đa</span>
+              <span className={`font-mono text-sm tabular-nums ${beWarning ? 'text-red-400' : 'text-primary'}`}>
+                {fm.breakEvenDiscountPct.toFixed(1)}%
+              </span>
+            </div>
+            <div className="border-t border-[#1e1e1e] pt-2.5">
+              <p className={`text-xs leading-relaxed ${beWarning ? 'text-red-400' : 'text-secondary'}`}>
+                {beWarning
+                  ? `⚠ Ngưỡng hòa vốn rất thấp (${fm.breakEvenDiscountPct.toFixed(1)}%). Giảm sâu hơn sẽ âm dòng tiền thực tế.`
+                  : `Giảm tối đa ${fm.breakEvenDiscountPct.toFixed(1)}% mà không âm dòng tiền. Mức an toàn.`}
+              </p>
+            </div>
+          </div>
+        </div>
+      </div>
+    </motion.div>
+  );
+}
+
+// ─── Tax Shield Card ──────────────────────────────────────────────────────────
+function TaxShieldCard({
+  fm,
+  skuName,
+  accountingMethod = 'FIFO',
+}: {
+  fm: FinancialMetrics;
+  skuName: string;
+  accountingMethod?: string;
+}) {
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 16 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ delay: 0.25, duration: 0.5 }}
+      className="border border-amber-400/20 bg-amber-400/[0.02] rounded-2xl p-8"
+    >
+      <div className="flex items-start justify-between gap-4 mb-6">
+        <div>
+          <span className="inline-block text-[10px] font-mono text-amber-400 border border-amber-400/30 rounded-lg px-3 py-1 mb-3 uppercase tracking-widest">
+            Lá chắn thuế (Tax Shield Strategy)
+          </span>
+          <h3 className="font-tight font-bold text-primary text-xl tracking-tight">
+            Quyên góp & Tối ưu Thuế
+          </h3>
+        </div>
+        <div className="text-right flex-shrink-0">
+          <div className="text-[10px] font-mono text-secondary uppercase tracking-widest mb-1">Tiết kiệm thuế</div>
+          <div className="font-tight font-black text-amber-400 text-2xl tabular-nums">
+            {formatVND(fm.taxShieldValue)}
+          </div>
+        </div>
+      </div>
+
+      <p className="text-secondary text-sm leading-relaxed mb-6 max-w-2xl">
+        Xả hàng{' '}
+        <span className="text-primary font-medium">[{skuName}]</span>{' '}
+        không còn hiệu quả tài chính ({fm.netRecoveryRate.toFixed(1)}% ROI ròng). Theo phương pháp kế toán{' '}
+        <span className="text-amber-400 font-mono">{accountingMethod}</span>, AI đề xuất{' '}
+        <strong className="text-primary">Quyên góp từ thiện</strong> hoặc{' '}
+        <strong className="text-primary">Tiêu hủy</strong> để ghi nhận khoản lỗ, giúp giảm{' '}
+        <span className="text-amber-400 font-bold tabular-nums">{formatVND(fm.taxShieldValue)}</span>{' '}
+        tiền thuế TNDN cuối năm (@ 20%).
+      </p>
+
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+        {[
+          {
+            action: 'Quyên góp từ thiện',
+            benefit: 'Ghi nhận khoản lỗ toàn bộ. Tối đa lá chắn thuế.',
+            tag: 'Tốt nhất',
+          },
+          {
+            action: 'Tiêu hủy hàng tồn',
+            benefit: 'Đơn giản về thủ tục. Giải phóng kho vật lý ngay.',
+            tag: 'Nhanh nhất',
+          },
+          {
+            action: 'Bán sỉ B2B Wholesale',
+            benefit: `Thu hồi tối thiểu. Chỉ khả thi nếu có đối tác B2B.`,
+            tag: 'Thu hồi một phần',
+          },
+        ].map((opt) => (
+          <div key={opt.action} className="bg-[#0A0A0A] border border-[#1e1e1e] rounded-xl p-4">
+            <div className="text-[10px] font-mono text-amber-400 mb-1 uppercase tracking-widest">{opt.tag}</div>
+            <div className="text-sm font-bold text-primary mb-1">{opt.action}</div>
+            <div className="text-xs text-secondary leading-relaxed">{opt.benefit}</div>
+          </div>
+        ))}
+      </div>
+    </motion.div>
+  );
+}
 
 // ─── RPA Button Component ────────────────────────────────────────────────────
 function RpaExecutionButton({ cta, payload }: { cta: string; payload: RpaPayload }) {
@@ -303,6 +555,10 @@ export default function RecoveryCopilot({ deadStockData }: RecoveryCopilotProps)
   const days = topDeadSku.daysInInventory ?? calculateDaysInInventory(topDeadSku.lastOrderDate);
   const phase = getLiquidationPhase(days);
   const skuLabel = topDeadSku.name;
+  const cfg = LIQUIDATION_PHASES[phase];
+
+  // CFO Financial Metrics (tính client-side, cùng công thức với Backend engine)
+  const fm = calculateFinancialMetrics(topDeadSku, days, cfg.discountPct / 100);
 
   // Tính Smart Bundle nếu có topSellingSku
   let bundleMarginPct = 0;
@@ -351,6 +607,14 @@ export default function RecoveryCopilot({ deadStockData }: RecoveryCopilotProps)
         <div className="flex flex-col gap-8">
           {/* ── Progressive Liquidation (AI-recommended phase) ── */}
           <ProgressiveLiquidationPanel phase={phase} sku={topDeadSku} days={days} />
+
+          {/* ── CFO Break-even & ROI Dashboard ── */}
+          <BreakEvenDashboard fm={fm} />
+
+          {/* ── Tax Shield Card (chỉ hiện khi ROI âm hoặc LOW_VALUE_OLD) ── */}
+          {fm.isTaxShieldRecommended && (
+            <TaxShieldCard fm={fm} skuName={skuLabel} accountingMethod="FIFO" />
+          )}
 
           {/* ── Smart Bundle (Cross-sell) ── */}
           <motion.div

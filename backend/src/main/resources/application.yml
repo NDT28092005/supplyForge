@@ -57,6 +57,14 @@ supplyforge:
     storage-cost-yearly-rate: 0.25
     # Tỷ lệ khấu hao lỗi thời mỗi năm (mặc định: 10%)
     depreciation-cost-yearly-rate: 0.10
+    # Thuế TNDN (mặc định Việt Nam: 20%)
+    tax-rate: 0.20
+    # Chi phí marketing & vận chuyển ước tính khi xả hàng (% doanh thu)
+    marketing-cost-rate: 0.08
+    # Ngưỡng phân loại "Hàng giá trị cao" (VND/lô): 10 triệu
+    high-value-threshold: 10000000
+    # Ngưỡng phân loại "Hàng giá trị trung bình" (VND/lô): 1 triệu
+    mid-value-threshold: 1000000
   aging:
     # Ngưỡng phân loại (ngày) — Healthy / Watchlist / SlowMoving / DeadStock
     healthy-max-days: 30
