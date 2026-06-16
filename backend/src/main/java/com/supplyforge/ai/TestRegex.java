@@ -1,3 +1,5 @@
+package com.supplyforge.ai;
+
 import java.util.*;
 import java.util.regex.*;
 
