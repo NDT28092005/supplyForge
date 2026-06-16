@@ -1,0 +1,6 @@
+sku,product_name,qty,cost,price,date
+"MAC-M2-MAX","MacBook Pro M2 Max 64GB/1TB",5,75000000,95000000,01/06/2024
+"SURFACE-L5","Microsoft Surface Laptop 5",12,25000000,32000000,15/08/2024
+"OLD-CHAIR","Ghế công thái học Herman Miller (Lỗi nhẹ)",20,35000000,45000000,10/12/2023
+"SSD-2TB-SAMSUNG","Ổ cứng SSD Samsung 980 Pro 2TB",100,4500000,5500000,20/01/2025
+"DELL-U2723QE","Màn hình Dell UltraSharp 27 4K",15,12500000,15500000,10/11/2024

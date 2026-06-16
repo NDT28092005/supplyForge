@@ -37,9 +37,10 @@ interface CashflowVaultProps {
   data: DashboardData | null;
   onProceed: () => void;
   onRecovery: () => void;
+  onCommandCenter?: () => void;
 }
 
-export default function CashflowVault({ data, onProceed, onRecovery }: CashflowVaultProps) {
+export default function CashflowVault({ data, onProceed, onRecovery, onCommandCenter }: CashflowVaultProps) {
   const deadStockValue = data?.totalDeadStockValueVnd ?? 0;
   const estimatedLoss = data?.estimatedLoss30DaysVnd ?? 0;
   const staleCount = data?.staleSkuCount ?? 0;
@@ -170,23 +171,33 @@ export default function CashflowVault({ data, onProceed, onRecovery }: CashflowV
           variants={blockVariants}
           className="flex flex-col sm:flex-row items-center gap-4 pt-2"
         >
-          {/* Primary: Recovery Plan */}
-          <motion.button
-            onClick={onRecovery}
-            className="bg-accent text-background font-tight font-bold text-sm px-10 py-4 rounded-xl tracking-tight w-full sm:w-auto flex-shrink-0"
-            whileHover={{ scale: 1.015, backgroundColor: '#deff5a' }}
-            whileTap={{ scale: 0.985 }}
-            transition={{ type: 'spring', stiffness: 400, damping: 25 }}
-          >
-            Tạo AI Recovery Plan →
-          </motion.button>
+          {/* Primary: Portfolio Command Center */}
+          {onCommandCenter && (
+            <motion.button
+              onClick={onCommandCenter}
+              className="bg-accent text-background font-tight font-bold text-sm px-10 py-4 rounded-xl tracking-tight w-full sm:w-auto flex-shrink-0"
+              whileHover={{ scale: 1.015, backgroundColor: '#deff5a' }}
+              whileTap={{ scale: 0.985 }}
+              transition={{ type: 'spring', stiffness: 400, damping: 25 }}
+            >
+              ⚡ Command Center — Kế hoạch tuần này
+            </motion.button>
+          )}
 
-          {/* Secondary: normalize SKUs */}
+          {/* Secondary: Recovery Plan (SKU-level deep dive) */}
           <button
-            onClick={onProceed}
+            onClick={onRecovery}
             className="text-secondary text-sm hover:text-primary transition-colors underline underline-offset-4 whitespace-nowrap"
           >
-            Hoặc chuẩn hóa SKU trước
+            Xem AI Recovery Plan theo từng SKU
+          </button>
+
+          {/* Tertiary: normalize SKUs */}
+          <button
+            onClick={onProceed}
+            className="text-secondary text-sm hover:text-primary transition-colors underline underline-offset-4 whitespace-nowrap opacity-60"
+          >
+            Chuẩn hóa SKU trước
           </button>
         </motion.div>
 

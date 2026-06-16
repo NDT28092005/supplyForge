@@ -20,20 +20,40 @@ public class SkuMergeController {
     }
 
     /**
-     * DTO để trả về đúng cấu trúc Frontend (SkuMergeCard.tsx) mong đợi
+     * DTO để trả về đúng cấu trúc Frontend mong đợi
      */
     public static class SkuPairDTO {
         public String skuAId;
         public String skuAName;
+        public String skuACode;
+        public double skuAPrice;
+        public int skuAStock;
+        public String skuASource;
+
         public String skuBId;
         public String skuBName;
+        public String skuBCode;
+        public double skuBPrice;
+        public int skuBStock;
+        public String skuBSource;
+
         public int distance;
 
-        public SkuPairDTO(String skuAId, String skuAName, String skuBId, String skuBName, int distance) {
-            this.skuAId = skuAId;
-            this.skuAName = skuAName;
-            this.skuBId = skuBId;
-            this.skuBName = skuBName;
+        public SkuPairDTO(Product a, Product b, int distance) {
+            this.skuAId = a.getId();
+            this.skuAName = a.getProductName();
+            this.skuACode = a.getItemSku();
+            this.skuAPrice = a.getPrice() != null ? a.getPrice().doubleValue() : 0;
+            this.skuAStock = a.getStock() != null ? a.getStock() : 0;
+            this.skuASource = a.getPlatform() != null ? a.getPlatform() : "Hệ thống";
+
+            this.skuBId = b.getId();
+            this.skuBName = b.getProductName();
+            this.skuBCode = b.getItemSku();
+            this.skuBPrice = b.getPrice() != null ? b.getPrice().doubleValue() : 0;
+            this.skuBStock = b.getStock() != null ? b.getStock() : 0;
+            this.skuBSource = b.getPlatform() != null ? b.getPlatform() : "Hệ thống";
+
             this.distance = distance;
         }
     }
@@ -46,17 +66,15 @@ public class SkuMergeController {
         List<List<Product>> clusters = skuNormalizationService.findDuplicateCandidates(userId);
         List<SkuPairDTO> pairs = new ArrayList<>();
 
-                    // Chuyển đổi từ Cluster (List<Product>) sang các cặp (Pair) để hiện lên UI kiểu Tinder
-                    for (List<Product> cluster : clusters) {
-                        if (cluster.size() >= 2) {
-                            Product pA = cluster.get(0);
-                            for (int i = 1; i < cluster.size(); i++) {
-                                Product pB = cluster.get(i);
-                                // Tính distance giả lập hoặc lấy từ logic similarity (ở đây tạm để 2)
-                                pairs.add(new SkuPairDTO(pA.getId(), pA.getProductName(), pB.getId(), pB.getProductName(), 2));
-                            }
-                        }
-                    }
+        for (List<Product> cluster : clusters) {
+            if (cluster.size() >= 2) {
+                Product pA = cluster.get(0);
+                for (int i = 1; i < cluster.size(); i++) {
+                    Product pB = cluster.get(i);
+                    pairs.add(new SkuPairDTO(pA, pB, 2));
+                }
+            }
+        }
         return ResponseEntity.ok(pairs);
     }
 

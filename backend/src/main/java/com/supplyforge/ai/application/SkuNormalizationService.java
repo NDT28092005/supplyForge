@@ -67,8 +67,10 @@ public class SkuNormalizationService {
             String nameB = normalizeString(b.getProductName().toLowerCase());
             int distance = calculateLevenshteinDistance(nameA, nameB);
             
-            // Allow small typos (Levenshtein distance <= 3) or if one contains another completely
-            return distance <= 3 || nameA.contains(nameB) || nameB.contains(nameA);
+            double similarity = 1.0 - (double) distance / Math.max(nameA.length(), nameB.length());
+            
+            // Allow 65% similarity for "Chaos" spreadsheets or if one contains another
+            return similarity >= 0.65 || nameA.contains(nameB) || nameB.contains(nameA);
         }
         return false;
     }

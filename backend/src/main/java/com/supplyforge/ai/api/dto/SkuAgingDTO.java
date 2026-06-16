@@ -1,5 +1,7 @@
 package com.supplyforge.ai.api.dto;
 
+import com.supplyforge.ai.domain.industry.IndustryContext;
+
 public class SkuAgingDTO {
     private String id;
     private String name;
@@ -11,12 +13,14 @@ public class SkuAgingDTO {
     private String lastOrderDate;
     private int daysInInventory;
     private String agingBucket; // HEALTHY, WATCHLIST, SLOW_MOVING, DEAD_STOCK
+    private IndustryContext industryContext; // ← Industry Intelligence
 
     public SkuAgingDTO() {
     }
 
     public SkuAgingDTO(String id, String name, String sku, int quantity, double costPrice, double sellingPrice,
-                       double totalValue, String lastOrderDate, int daysInInventory, String agingBucket) {
+                       double totalValue, String lastOrderDate, int daysInInventory, String agingBucket,
+                       IndustryContext industryContext) {
         this.id = id;
         this.name = name;
         this.sku = sku;
@@ -27,6 +31,7 @@ public class SkuAgingDTO {
         this.lastOrderDate = lastOrderDate;
         this.daysInInventory = daysInInventory;
         this.agingBucket = agingBucket;
+        this.industryContext = industryContext;
     }
 
     public String getId() {
@@ -107,5 +112,13 @@ public class SkuAgingDTO {
 
     public void setAgingBucket(String agingBucket) {
         this.agingBucket = agingBucket;
+    }
+
+    public IndustryContext getIndustryContext() {
+        return industryContext;
+    }
+
+    public void setIndustryContext(IndustryContext industryContext) {
+        this.industryContext = industryContext;
     }
 }

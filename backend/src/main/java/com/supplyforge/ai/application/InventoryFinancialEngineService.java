@@ -2,6 +2,8 @@ package com.supplyforge.ai.application;
 
 import com.supplyforge.ai.api.dto.InventoryAgingDTO;
 import com.supplyforge.ai.api.dto.SkuAgingDTO;
+import com.supplyforge.ai.domain.industry.IndustryContext;
+import com.supplyforge.ai.domain.industry.IndustryPlaybook;
 import jakarta.persistence.EntityManager;
 import jakarta.persistence.PersistenceContext;
 import jakarta.persistence.Query;
@@ -21,6 +23,12 @@ public class InventoryFinancialEngineService {
 
     @PersistenceContext
     private EntityManager entityManager;
+
+    private final IndustryDetectionService industryDetectionService;
+
+    public InventoryFinancialEngineService(IndustryDetectionService industryDetectionService) {
+        this.industryDetectionService = industryDetectionService;
+    }
 
     @Value("${supplyforge.finance.storage-cost-yearly-rate:0.25}")
     private double storageCostYearlyRate;
@@ -83,23 +91,20 @@ public class InventoryFinancialEngineService {
             if (daysInInventory < 0) daysInInventory = 0;
 
             double totalValue = cost * stock;
-            String bucket;
 
-            if (daysInInventory <= 30) {
-                bucket = "HEALTHY";
-                totalHealthy += totalValue;
-            } else if (daysInInventory <= 60) {
-                bucket = "WATCHLIST";
-                totalWatchlist += totalValue;
-            } else if (daysInInventory <= 90) {
-                bucket = "SLOW_MOVING";
-                totalSlowMoving += totalValue;
-            } else {
-                bucket = "DEAD_STOCK";
-                totalDeadStock += totalValue;
+            // ── Industry-aware bucket classification ──────────────────────────
+            IndustryPlaybook playbook = industryDetectionService.detect(name);
+            String bucket = playbook.classifyAgingBucket(daysInInventory);
+            IndustryContext industryCtx = IndustryContext.from(playbook, daysInInventory);
+
+            switch (bucket) {
+                case "HEALTHY":      totalHealthy += totalValue; break;
+                case "WATCHLIST":    totalWatchlist += totalValue; break;
+                case "SLOW_MOVING": totalSlowMoving += totalValue; break;
+                case "DEAD_STOCK":  totalDeadStock += totalValue; break;
             }
 
-            SkuAgingDTO skuDto = new SkuAgingDTO(id, name, sku, stock, cost, price, totalValue, lastDateStr, daysInInventory, bucket);
+            SkuAgingDTO skuDto = new SkuAgingDTO(id, name, sku, stock, cost, price, totalValue, lastDateStr, daysInInventory, bucket, industryCtx);
             
             switch (bucket) {
                 case "HEALTHY": result.getHealthySkus().add(skuDto); break;

@@ -8,9 +8,11 @@ import SkuMergeCard from '@/components/SkuMergeCard';
 import RecoveryCopilot from '@/components/RecoveryCopilot';
 import DataMappingConfirm from '@/components/DataMappingConfirm';
 import InventoryAgingRadar, { InventoryAgingData } from '@/components/InventoryAgingRadar';
+import SkuDeduplicationTinder, { MatchProposal } from '@/components/SkuDeduplicationTinder';
+import CommandCenterDashboard from '@/components/CommandCenterDashboard';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
-type AppStage = 'hero' | 'processing' | 'mapping' | 'dashboard' | 'aging' | 'recovery-copilot' | 'sku-merge' | 'recovery';
+type AppStage = 'hero' | 'processing' | 'mapping' | 'dashboard' | 'aging' | 'recovery-copilot' | 'dedup' | 'recovery' | 'command-center';
 
 interface DashboardData {
   totalDeadStockValueVnd: number;
@@ -273,6 +275,28 @@ function RecoveryPlan({
   );
 }
 
+// ─── Demo pairs (fallback khi API không có dữ liệu) ──────────────────────────
+function getDemoPairs(): MatchProposal[] {
+  return [
+    {
+      confidenceScore: 0.92,
+      skuA: { id: 'd1a', skuCode: 'SKU-001', name: 'iPhone 13 128GB Đen', price: 18990000, stock: 24, source: 'Shopee' },
+      skuB: { id: 'd1b', skuCode: 'SKU-045', name: 'iPhone 13 128GB Đen cũ', price: 15500000, stock: 3, source: 'TikTok' },
+    },
+    {
+      confidenceScore: 0.78,
+      skuA: { id: 'd2a', skuCode: 'SKU-002', name: 'Áo Polo Nam Xanh Navy Size L', price: 320000, stock: 150, source: 'ERP' },
+      skuB: { id: 'd2b', skuCode: 'SKU-078', name: 'Áo Polo Nam Xanh Navy L', price: 299000, stock: 80, source: 'Lazada' },
+    },
+    {
+      confidenceScore: 0.85,
+      skuA: { id: 'd3a', skuCode: 'SKU-103', name: 'Tai nghe Sony WH-1000XM5 Đen', price: 7990000, stock: 12, source: 'ERP' },
+      skuB: { id: 'd3b', skuCode: 'SKU-104', name: 'Sony WH1000XM5 Màu Đen', price: 8200000, stock: 5, source: 'Shopee' },
+    },
+  ];
+}
+
+
 // ─── Main Page (Flow Orchestrator) ──────────────────────────────────────────
 export default function Home() {
   const [stage, setStage] = useState<AppStage>('hero');
@@ -280,6 +304,9 @@ export default function Home() {
   const [mappingData, setMappingData] = useState<any>(null);
   const [dashboardData, setDashboardData] = useState<DashboardData | null>(null);
   const [agingData, setAgingData] = useState<InventoryAgingData | null>(null);
+  const [portfolioData, setPortfolioData] = useState<any>(null);
+  const [portfolioLoading, setPortfolioLoading] = useState(false);
+  const [dedupProposals, setDedupProposals] = useState<MatchProposal[]>([]);
   const [isProcessingBatch, setIsProcessingBatch] = useState(false);
   const copilotRef = useRef<HTMLDivElement>(null);
 
@@ -360,7 +387,6 @@ export default function Home() {
 
   // Khi bấm "Tạo AI Recovery Plan" → đi qua Aging Radar trước
   const handleOpenRecovery = async () => {
-    // Đảm bảo aging data đã được tải
     if (!agingData) {
       try {
         const res = await fetch(`${API_URL}/api/v1/workspaces/${WORKSPACE_ID}/dashboard/aging`);
@@ -371,6 +397,101 @@ export default function Home() {
     }
     setStage('aging');
     window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+
+  // ── Command Center (Portfolio-level) ────────────────────────────────────────
+  const handleOpenCommandCenter = async () => {
+    setStage('command-center');
+    setPortfolioLoading(true);
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+    try {
+      const res = await fetch(
+        `${API_URL}/api/v1/workspaces/${WORKSPACE_ID}/dashboard/portfolio-command`
+      );
+      if (res.ok) setPortfolioData(await res.json());
+    } catch (e) {
+      console.error('Không tải được portfolio data:', e);
+    } finally {
+      setPortfolioLoading(false);
+    }
+  };
+
+  // ─── Data Refresh Helper ────────────────────────────────────────────────────
+  const refreshDashboardAndAging = async () => {
+    try {
+      // 1. Làm mới dashboard (Dead stock refresh)
+      const refreshRes = await fetch(`${API_URL}/api/v1/workspaces/${WORKSPACE_ID}/dashboard/dead-stock/refresh`, {
+        method: 'POST',
+      });
+      if (refreshRes.ok) {
+        const data = await refreshRes.json();
+        setDashboardData(data);
+      }
+      
+      // 2. Làm mới aging radar data
+      const agingRes = await fetch(`${API_URL}/api/v1/workspaces/${WORKSPACE_ID}/dashboard/aging`);
+      if (agingRes.ok) {
+        const aData = await agingRes.json();
+        setAgingData(aData);
+      }
+    } catch (e) {
+      console.error("Lỗi khi làm mới dữ liệu:", e);
+    }
+  };
+
+  // ─── SKU Normalization Helpers ─────────────────────────────────────────────
+  const handleFetchAndOpenTinder = async () => {
+    try {
+      const res = await fetch(`${API_URL}/api/v1/workspaces/${WORKSPACE_ID}/sku-merge/candidates`);
+      if (res.ok) {
+        const data = await res.json();
+        if (!data || data.length === 0) {
+          alert("Tuyệt vời! Không còn SKU nào bị nghi trùng lặp.");
+          return;
+        }
+        // Map SkuPairDTO → MatchProposal
+        const proposals: MatchProposal[] = data.map((p: any) => ({
+          confidenceScore: 0.85, 
+          skuA: { 
+            id: p.skuAId, 
+            skuCode: p.skuACode || p.skuAId, 
+            name: p.skuAName, 
+            price: p.skuAPrice, 
+            stock: p.skuAStock, 
+            source: p.skuASource 
+          },
+          skuB: { 
+            id: p.skuBId, 
+            skuCode: p.skuBCode || p.skuBId, 
+            name: p.skuBName, 
+            price: p.skuBPrice, 
+            stock: p.skuBStock, 
+            source: p.skuBSource 
+          },
+        }));
+        setDedupProposals(proposals);
+        setStage('dedup');
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+      }
+    } catch (e) {
+      alert("Lỗi tải danh sách SKU trùng.");
+    }
+  };
+
+  const handlePerformMerge = async (a: any, b: any) => {
+    try {
+      await fetch(`${API_URL}/api/v1/workspaces/${WORKSPACE_ID}/sku-merge/merge`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          parentSkuId: a.id,
+          childSkuId: b.id,
+        }),
+      });
+      console.log('Successfully merged:', a.name, '←', b.name);
+    } catch (e) {
+      console.error('Merge failed:', e);
+    }
   };
 
   return (
@@ -430,13 +551,25 @@ export default function Home() {
         </motion.div>
       )}
 
+      {/* ── Command Center Stage ── */}
+      {stage === 'command-center' && (
+        <motion.div key="command-center" variants={pageVariants} initial="initial" animate="enter" exit="exit">
+          <CommandCenterDashboard
+            portfolioData={portfolioData}
+            loading={portfolioLoading}
+            onBack={() => setStage('dashboard')}
+          />
+        </motion.div>
+      )}
+
       {/* Dashboard + RecoveryCopilot cùng trang, slide-in bên dưới */}
       {(stage === 'dashboard' || stage === 'recovery-copilot') && (
         <motion.div key="dashboard" variants={pageVariants} initial="initial" animate="enter" exit="exit">
           <CashflowVault
             data={dashboardData}
-            onProceed={() => setStage('sku-merge')}
+            onProceed={handleFetchAndOpenTinder}
             onRecovery={handleOpenRecovery}
+            onCommandCenter={handleOpenCommandCenter}
           />
 
           {stage === 'recovery-copilot' && (
@@ -452,50 +585,42 @@ export default function Home() {
               </div>
 
               <RecoveryCopilot
-                deadStockData={{
-                  totalFrozenValue: dashboardData?.totalDeadStockValueVnd ?? 0,
-                  topDeadSku: (() => {
-                    // Ưu tiên dùng data từ Aging API (có daysInInventory thực tế)
-                    const agingTop = agingData?.deadStockSkus?.[0] ?? agingData?.slowMovingSkus?.[0];
-                    if (agingTop) {
-                      return {
-                        name: agingTop.name,
-                        quantity: agingTop.quantity,
-                        costPrice: agingTop.costPrice,
-                        sellingPrice: agingTop.sellingPrice,
-                        lastOrderDate: agingTop.lastOrderDate,
-                        daysInInventory: agingTop.daysInInventory,
-                      };
-                    }
-                    // Fallback về dashboard data cũ
-                    if (!dashboardData?.topStaleSkus?.[0]) return null;
-                    return {
-                      name: dashboardData.topStaleSkus[0].name,
-                      quantity: 50,
-                      costPrice: 120000,
-                      sellingPrice: 200000,
-                      lastOrderDate: dashboardData.topStaleSkus[0].lastRecordDate,
-                    };
-                  })(),
-                  topSellingSku: agingData?.healthySkus?.[0]
+                cluster={
+                  portfolioData?.priorityClusters?.[0]
                     ? {
-                        name: agingData.healthySkus[0].name,
-                        sellingPrice: agingData.healthySkus[0].sellingPrice,
-                        costPrice: agingData.healthySkus[0].costPrice,
+                        clusterName: portfolioData.priorityClusters[0].clusterName,
+                        industryType:
+                          portfolioData.priorityClusters[0].industryCode === 'HOME_LIVING' ? 'FURNITURE' :
+                          portfolioData.priorityClusters[0].industryCode === 'ELECTRONICS_TECH' ? 'ELECTRONICS' :
+                          portfolioData.priorityClusters[0].industryCode === 'FASHION_FAST' ? 'FASHION' :
+                          portfolioData.priorityClusters[0].industryCode === 'FMCG_FOOD' ? 'FMCG' : 'GENERAL',
+                        totalSunkCost: portfolioData.priorityClusters[0].totalFrozenValue * 1.05,
+                        totalInitialCost: portfolioData.priorityClusters[0].totalFrozenValue,
+                        accumulatedStorageFee: portfolioData.priorityClusters[0].totalFrozenValue * 0.05,
+                        maxSafeDiscount: 20.6,
+                        items: portfolioData.priorityClusters[0].topSkuSamples?.map((s: any) => ({
+                          skuName: s.name,
+                          agingDays: s.daysInInventory,
+                          stock: 100, // mock
+                        })) || [],
+                        bundleAvailable: agingData?.healthySkus?.[0]
+                          ? {
+                              hotItemName: agingData.healthySkus[0].name,
+                              hotItemPrice: agingData.healthySkus[0].sellingPrice,
+                              hotItemCost: agingData.healthySkus[0].costPrice,
+                              bundleDiscountPct: 15,
+                            }
+                          : undefined,
                       }
-                    : {
-                        name: 'Sản phẩm Hot Trend',
-                        sellingPrice: 150000,
-                        costPrice: 90000,
-                      },
-                }}
+                    : undefined
+                }
               />
 
               {/* Nav sau Recovery */}
               <div className="max-w-4xl mx-auto px-6 md:px-16 lg:px-24 pb-24">
                 <div className="border-t border-[#262626] pt-8 flex flex-col sm:flex-row items-center gap-4">
                   <motion.button
-                    onClick={() => setStage('sku-merge')}
+                    onClick={handleFetchAndOpenTinder}
                     className="bg-accent text-background font-tight font-bold text-sm px-8 py-3.5 rounded-xl flex-shrink-0"
                     whileHover={{ scale: 1.015, backgroundColor: '#deff5a' }}
                     whileTap={{ scale: 0.985 }}
@@ -532,9 +657,17 @@ export default function Home() {
         </motion.div>
       )}
 
-      {stage === 'sku-merge' && (
-        <motion.div key="sku-merge" variants={pageVariants} initial="initial" animate="enter" exit="exit">
-          <SkuMergeCard onComplete={() => setStage('hero')} />
+      {stage === 'dedup' && (
+        <motion.div key="dedup" variants={pageVariants} initial="initial" animate="enter" exit="exit">
+          <SkuDeduplicationTinder
+            proposals={dedupProposals}
+            onMerge={handlePerformMerge}
+            onIgnore={(a, b) => console.log('Ignored:', a.name, b.name)}
+            onComplete={async () => {
+              await refreshDashboardAndAging(); // Tải lại toàn bộ số liệu mới
+              setStage('dashboard');
+            }}
+          />
         </motion.div>
       )}
     </AnimatePresence>
